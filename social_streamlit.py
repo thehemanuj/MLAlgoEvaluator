@@ -18,6 +18,10 @@ if 'model_instance' not in st.session_state:
     st.session_state.model_instance = None
 if 'y_test' not in st.session_state:
     st.session_state.y_test = None
+if 'X_test' not in st.session_state:
+    st.session_state.X_test = None
+if 'task_type' not in st.session_state:
+    st.session_state.task_type = None
 
 # Sidebar: Task selection
 st.sidebar.header("⚙️ Configuration")
@@ -177,7 +181,8 @@ if selected_dataset_path is not None:
                         st.session_state.results = results
                         st.session_state.model_instance = model
                         st.session_state.task_type = task_selector
-                        st.session_state.y_test = y_test  # ADDED: Store y_test
+                        st.session_state.y_test = y_test
+                        st.session_state.X_test = X_test
                         
                         st.success("✅ Training Complete!")
                         st.balloons()
@@ -194,17 +199,17 @@ if selected_dataset_path is not None:
             results = st.session_state.results
             model = st.session_state.model_instance
             
+            # Get metrics from results
+            metrics = results.get('metrics', {})
+            
             # Display based on task type
             if st.session_state.task_type == "Classification":
                 # Get best model info
                 if selected_model_key == 'best':
                     best_model_key = results['best_model']
                     best_model_name = [name for name, key in dictionary_model.items() if key == best_model_key][0]
-                    metrics = results['metrics']
                     
                     st.info(f"🏆 **Best Model Selected:** {best_model_name}")
-                else:
-                    metrics = results['metrics']
                 
                 # Display metrics in columns
                 col1, col2, col3, col4 = st.columns(4)
@@ -238,11 +243,8 @@ if selected_dataset_path is not None:
                 if selected_model_key == 'best':
                     best_model_key = results['best_model']
                     best_model_name = [name for name, key in dictionary_model.items() if key == best_model_key][0]
-                    metrics = results['metrics']
                     
                     st.info(f"🏆 **Best Model Selected:** {best_model_name}")
-                else:
-                    metrics = results['metrics']
                 
                 # Display metrics in columns
                 col1, col2, col3, col4 = st.columns(4)
@@ -266,25 +268,17 @@ if selected_dataset_path is not None:
             st.markdown("---")
             st.markdown("### 💾 Download Results")
             
-            # FIXED: Use y_test from session state
-            y_test = st.session_state.y_test
-            
-            if task_selector == "Classification":
-                predictions_df = pd.DataFrame({
-                    'Actual': y_test,
-                    'Predicted': metrics['predictions']
-                })
-            else:
-                predictions_df = pd.DataFrame({
-                    'Actual': y_test,
-                    'Predicted': metrics['predictions']
-                })
+            # Use session state variables
+            predictions_df = pd.DataFrame({
+                'Actual': st.session_state.y_test,
+                'Predicted': metrics['predictions']
+            })
             
             csv = predictions_df.to_csv(index=False)
             st.download_button(
                 label="📥 Download Predictions as CSV",
                 data=csv,
-                file_name=f"{task_selector.lower()}_predictions.csv",
+                file_name=f"{st.session_state.task_type.lower()}_predictions.csv",
                 mime="text/csv"
             )
             
