@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+import pickle
+import io
 
 # Import your classes (adjust import paths as needed)
 from preprocessing import DataPreprocessor
@@ -22,6 +24,8 @@ if 'X_test' not in st.session_state:
     st.session_state.X_test = None
 if 'task_type' not in st.session_state:
     st.session_state.task_type = None
+if 'trained_model' not in st.session_state:
+    st.session_state.trained_model = None
 
 # Sidebar: Task selection
 st.sidebar.header("⚙️ Configuration")
@@ -184,6 +188,17 @@ if selected_dataset_path is not None:
                         st.session_state.y_test = y_test
                         st.session_state.X_test = X_test
                         
+                        # Store the trained model object for download
+                        # Assuming your Classification/Regression class has a 'model' attribute
+                        # that contains the actual trained sklearn model
+                        if hasattr(model, 'model'):
+                            st.session_state.trained_model = model.model
+                        elif hasattr(model, 'best_model'):
+                            st.session_state.trained_model = model.best_model
+                        else:
+                            # If the structure is different, you may need to adjust this
+                            st.session_state.trained_model = model
+                        
                         st.success("✅ Training Complete!")
                         st.balloons()
                         
@@ -263,10 +278,30 @@ if selected_dataset_path is not None:
                     st.markdown("#### 📊 Model Comparison")
                     comparison_df = model.get_model_comparison()
                     st.dataframe(comparison_df, use_container_width=True)
+
+            # Download Model
+            st.markdown('---')
+            st.markdown('### 🗃️ Download Trained Model')
+            
+            if st.session_state.trained_model is not None:
+                # Serialize the model to bytes using pickle
+                model_bytes = io.BytesIO()
+                pickle.dump(st.session_state.trained_model, model_bytes)
+                model_bytes.seek(0)
+                
+                st.download_button(
+                    label="📦 Download Model as PKL",
+                    data=model_bytes,
+                    file_name=f"{st.session_state.task_type.lower()}_model.pkl",
+                    mime="application/octet-stream",
+                    help="Download the trained model as a pickle file for later use"
+                )
+            else:
+                st.warning("⚠️ Model not available for download. Please train a model first.")
             
             # Download predictions
             st.markdown("---")
-            st.markdown("### 💾 Download Results")
+            st.markdown("### 💾 Download Predictions")
             
             # Use session state variables
             predictions_df = pd.DataFrame({
