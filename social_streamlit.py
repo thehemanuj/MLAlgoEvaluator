@@ -16,6 +16,8 @@ if 'results' not in st.session_state:
     st.session_state.results = None
 if 'model_instance' not in st.session_state:
     st.session_state.model_instance = None
+if 'y_test' not in st.session_state:
+    st.session_state.y_test = None
 
 # Sidebar: Task selection
 st.sidebar.header("⚙️ Configuration")
@@ -175,6 +177,7 @@ if selected_dataset_path is not None:
                         st.session_state.results = results
                         st.session_state.model_instance = model
                         st.session_state.task_type = task_selector
+                        st.session_state.y_test = y_test  # ADDED: Store y_test
                         
                         st.success("✅ Training Complete!")
                         st.balloons()
@@ -263,6 +266,9 @@ if selected_dataset_path is not None:
             st.markdown("---")
             st.markdown("### 💾 Download Results")
             
+            # FIXED: Use y_test from session state
+            y_test = st.session_state.y_test
+            
             if task_selector == "Classification":
                 predictions_df = pd.DataFrame({
                     'Actual': y_test,
@@ -295,7 +301,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; color: gray;'>
-    Built with ❤️ by Ayush | Machine Learning Model Evaluator
+    Built with ❤️ using Streamlit | Machine Learning Model Evaluator
     </div>
     """,
     unsafe_allow_html=True
