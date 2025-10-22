@@ -295,7 +295,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align: center; color: gray;'>
-    Built with ❤️ using Streamlit | Machine Learning Model Evaluator
+    Built with ❤️ by Ayush | Machine Learning Model Evaluator
     </div>
     """,
     unsafe_allow_html=True
