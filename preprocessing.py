@@ -1,10 +1,14 @@
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, LabelEncoder
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
+from imblearn.over_sampling import SMOTE, RandomOverSampler, ADASYN
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.combine import SMOTETomek, SMOTEENN
+from collections import Counter
 
 
 class DataPreprocessor:
@@ -13,9 +17,11 @@ class DataPreprocessor:
         self.preprocessor = None
         
     def preprocess(self, features, target, scale_method='standard', 
-                   encode_method='onehot', impute_strategy='mean'):
+                   encode_method='onehot', impute_strategy='mean',
+                   handle_imbalance=None, imbalance_strategy='smote',
+                   sampling_ratio='auto'):
         """
-        Preprocess dataset using scikit-learn pipelines.
+        Preprocess dataset using scikit-learn pipelines with imbalance handling.
         
         Parameters:
         -----------
@@ -29,11 +35,25 @@ class DataPreprocessor:
             'onehot' for OneHotEncoder, 'label' for LabelEncoder
         impute_strategy : str, default='mean'
             Strategy for imputing numeric values ('mean', 'median', 'most_frequent')
+        handle_imbalance : bool or None, default=None
+            Whether to handle class imbalance. If None, auto-detects imbalance
+        imbalance_strategy : str, default='smote'
+            Strategy for handling imbalance:
+            - 'smote': Synthetic Minority Over-sampling Technique
+            - 'adasyn': Adaptive Synthetic Sampling
+            - 'random_oversample': Random oversampling of minority class
+            - 'random_undersample': Random undersampling of majority class
+            - 'smote_tomek': SMOTE + Tomek links cleaning
+            - 'smote_enn': SMOTE + Edited Nearest Neighbors cleaning
+        sampling_ratio : float, str, or dict, default='auto'
+            Sampling ratio for resampling. 'auto' handles automatically
             
         Returns:
         --------
         X_train, X_test, y_train, y_test : arrays
             Split and preprocessed data
+        class_distribution : dict
+            Distribution of classes before and after resampling
         """
         # Load dataset
         df = pd.read_csv(self.dataset)
@@ -49,18 +69,29 @@ class DataPreprocessor:
         X = df[features]
         y = df[target_col]
         
+        # Check class distribution
+        original_distribution = Counter(y)
+        print(f"Original class distribution: {dict(original_distribution)}")
+        
+        # Auto-detect imbalance if not specified
+        if handle_imbalance is None:
+            handle_imbalance = self._detect_imbalance(y)
+            if handle_imbalance:
+                print("⚠️  Class imbalance detected! Applying resampling strategy.")
+        
         # Split data first (avoid data leakage)
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, random_state=39, train_size=0.8
+            X, y, random_state=39, train_size=0.8, stratify=y
         )
+        
+        train_distribution_before = Counter(y_train)
+        print(f"Training set distribution before resampling: {dict(train_distribution_before)}")
         
         # Identify column types
         numeric_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
         categorical_cols = X_train.select_dtypes(include=['object', 'category']).columns.tolist()
         
         # Build preprocessing pipelines
-        
-        # Numeric pipeline
         if scale_method == 'standard':
             scaler = StandardScaler()
         elif scale_method == 'minmax':
@@ -80,8 +111,6 @@ class DataPreprocessor:
                 ('encoder', OneHotEncoder(drop='first', sparse_output=False, handle_unknown='ignore'))
             ])
         elif encode_method == 'label':
-            # Note: LabelEncoder doesn't work well with pipelines for multiple columns
-            # Using OrdinalEncoder instead
             from sklearn.preprocessing import OrdinalEncoder
             categorical_transformer = Pipeline(steps=[
                 ('imputer', SimpleImputer(strategy='most_frequent')),
@@ -99,21 +128,107 @@ class DataPreprocessor:
         
         self.preprocessor = ColumnTransformer(
             transformers=transformers,
-            remainder='passthrough'  # Keep any other columns as-is
+            remainder='passthrough'
         )
         
         # Fit on training data and transform both sets
         X_train_processed = self.preprocessor.fit_transform(X_train)
         X_test_processed = self.preprocessor.transform(X_test)
         
+        # Handle class imbalance AFTER preprocessing
+        if handle_imbalance:
+            X_train_processed, y_train = self._apply_resampling(
+                X_train_processed, y_train, 
+                strategy=imbalance_strategy,
+                sampling_ratio=sampling_ratio
+            )
+            train_distribution_after = Counter(y_train)
+            print(f"Training set distribution after resampling: {dict(train_distribution_after)}")
+        
         # Get feature names after transformation
         feature_names = self.get_feature_names()
         
-        # Convert back to DataFrame (optional, for better readability)
-        X_train_processed = pd.DataFrame(X_train_processed, columns=feature_names, index=X_train.index)
+        # Convert back to DataFrame
+        X_train_processed = pd.DataFrame(X_train_processed, columns=feature_names)
         X_test_processed = pd.DataFrame(X_test_processed, columns=feature_names, index=X_test.index)
         
-        return X_train_processed, X_test_processed, y_train, y_test
+        # Prepare class distribution summary
+        class_distribution = {
+            'original': dict(original_distribution),
+            'train_before': dict(train_distribution_before),
+            'train_after': dict(Counter(y_train)) if handle_imbalance else dict(train_distribution_before),
+            'test': dict(Counter(y_test))
+        }
+        
+        return X_train_processed, X_test_processed, y_train, y_test, class_distribution
+    
+    def _detect_imbalance(self, y, threshold=0.3):
+        """
+        Detect if classes are imbalanced.
+        
+        Parameters:
+        -----------
+        y : Series
+            Target variable
+        threshold : float
+            Ratio threshold below which imbalance is detected
+            
+        Returns:
+        --------
+        bool : True if imbalanced
+        """
+        class_counts = Counter(y)
+        if len(class_counts) < 2:
+            return False
+        
+        min_count = min(class_counts.values())
+        max_count = max(class_counts.values())
+        ratio = min_count / max_count
+        
+        return ratio < threshold
+    
+    def _apply_resampling(self, X, y, strategy='smote', sampling_ratio='auto'):
+        """
+        Apply resampling strategy to handle imbalance.
+        
+        Parameters:
+        -----------
+        X : array
+            Feature matrix
+        y : array
+            Target variable
+        strategy : str
+            Resampling strategy
+        sampling_ratio : float, str, or dict
+            Sampling ratio
+            
+        Returns:
+        --------
+        X_resampled, y_resampled : arrays
+        """
+        # Select resampling method
+        if strategy == 'smote':
+            sampler = SMOTE(sampling_strategy=sampling_ratio, random_state=42)
+        elif strategy == 'adasyn':
+            sampler = ADASYN(sampling_strategy=sampling_ratio, random_state=42)
+        elif strategy == 'random_oversample':
+            sampler = RandomOverSampler(sampling_strategy=sampling_ratio, random_state=42)
+        elif strategy == 'random_undersample':
+            sampler = RandomUnderSampler(sampling_strategy=sampling_ratio, random_state=42)
+        elif strategy == 'smote_tomek':
+            sampler = SMOTETomek(sampling_strategy=sampling_ratio, random_state=42)
+        elif strategy == 'smote_enn':
+            sampler = SMOTEENN(sampling_strategy=sampling_ratio, random_state=42)
+        else:
+            raise ValueError(f"Unknown imbalance strategy: {strategy}")
+        
+        try:
+            X_resampled, y_resampled = sampler.fit_resample(X, y)
+            return X_resampled, y_resampled
+        except Exception as e:
+            print(f"⚠️  Resampling failed: {e}")
+            print("Returning original data without resampling.")
+            return X, y
     
     def get_feature_names(self):
         """Get feature names after transformation"""
@@ -126,11 +241,9 @@ class DataPreprocessor:
                 continue
             
             if hasattr(transformer, 'get_feature_names_out'):
-                # For transformers that support get_feature_names_out
                 names = transformer.get_feature_names_out(columns)
                 feature_names.extend(names)
             else:
-                # Fallback for transformers without this method
                 feature_names.extend(columns)
         
         return feature_names
@@ -142,12 +255,11 @@ class DataPreprocessor:
         Parameters:
         -----------
         new_data : DataFrame
-            New data to transform (must have same columns as training data)
+            New data to transform
             
         Returns:
         --------
         transformed_data : DataFrame
-            Preprocessed data
         """
         if self.preprocessor is None:
             raise ValueError("Preprocessor not fitted. Call preprocess() first.")
@@ -165,22 +277,24 @@ if __name__ == "__main__":
     
     # Define features and target
     features = ['age', 'income', 'gender', 'city', 'score']
-    target = ['purchased']  # or just 'purchased'
+    target = ['purchased']
     
-    # Preprocess with different options
-    X_train, X_test, y_train, y_test = preprocessor.preprocess(
+    # Preprocess with imbalance handling
+    X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
         features=features,
         target=target,
-        scale_method='standard',  # or 'minmax'
-        encode_method='onehot',   # or 'label'
-        impute_strategy='mean'    # or 'median', 'most_frequent'
+        scale_method='standard',
+        encode_method='onehot',
+        impute_strategy='mean',
+        handle_imbalance=True,  # Set to True to handle imbalance, None for auto-detect
+        imbalance_strategy='smote',  # Options: 'smote', 'adasyn', 'random_oversample', etc.
+        sampling_ratio='auto'  # 'auto' or specific ratio like 0.5
     )
     
+    print("\n" + "="*60)
     print("Training set shape:", X_train.shape)
     print("Test set shape:", X_test.shape)
-    print("\nFeature names after transformation:")
-    print(X_train.columns.tolist())
-    
-    # Transform new data (e.g., for predictions)
-    # new_data = pd.DataFrame({'age': [25], 'income': [50000], ...})
-    # new_data_processed = preprocessor.transform_new_data(new_data)
+    print("\nClass Distribution Summary:")
+    for key, value in distribution.items():
+        print(f"  {key}: {value}")
+    print("="*60)

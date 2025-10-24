@@ -1,5 +1,8 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from collections import Counter
 import pickle
 import io
 
@@ -8,7 +11,7 @@ from preprocessing import DataPreprocessor
 from social_classification import Classification
 from social_regression import Regression
 
-st.set_page_config(page_title="ML Model Evaluator", layout="wide")
+st.set_page_config(page_title="ML Model Evaluator", layout="wide",page_icon="🤓")
 st.title("📊 Supervised Machine Learning Evaluator")
 
 # Initialize session state
@@ -18,14 +21,6 @@ if 'results' not in st.session_state:
     st.session_state.results = None
 if 'model_instance' not in st.session_state:
     st.session_state.model_instance = None
-if 'y_test' not in st.session_state:
-    st.session_state.y_test = None
-if 'X_test' not in st.session_state:
-    st.session_state.X_test = None
-if 'task_type' not in st.session_state:
-    st.session_state.task_type = None
-if 'trained_model' not in st.session_state:
-    st.session_state.trained_model = None
 
 # Sidebar: Task selection
 st.sidebar.header("⚙️ Configuration")
@@ -80,6 +75,23 @@ st.sidebar.subheader("Preprocessing Options")
 scale_method = st.sidebar.selectbox("Scaling Method", ["standard", "minmax"])
 encode_method = st.sidebar.selectbox("Encoding Method", ["onehot", "label"])
 impute_strategy = st.sidebar.selectbox("Imputation Strategy", ["mean", "median", "most_frequent"])
+
+# Sidebar: Imbalance handling (only for classification)
+if task_selector == "Classification":
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Imbalance Handling")
+    handle_imbalance = st.sidebar.checkbox("Handle Class Imbalance", value=False)
+    
+    if handle_imbalance:
+        imbalance_strategy = st.sidebar.selectbox("Resampling Strategy", [
+            "smote", "adasyn", "random_oversample", "random_undersample", 
+            "smote_tomek", "smote_enn"
+        ])
+    else:
+        imbalance_strategy = None
+else:
+    handle_imbalance = None
+    imbalance_strategy = None
 
 # Sidebar: Dataset selection
 st.sidebar.markdown("---")
@@ -156,6 +168,83 @@ if selected_dataset_path is not None:
         else:
             st.success(f"✅ Selected {len(features)} features and 1 target variable.")
             
+            # Data Visualization BEFORE model training
+            st.markdown("---")
+            st.markdown("### 📊 Data Visualization")
+            
+            # For Classification: Show target distribution and check imbalance
+            if task_selector == "Classification":
+                target_counts = df[target].value_counts()
+                
+                # Check for imbalance
+                min_count = target_counts.min()
+                max_count = target_counts.max()
+                imbalance_ratio = min_count / max_count
+                
+                col_viz1, col_viz2 = st.columns(2)
+                
+                with col_viz1:
+                    st.markdown("#### Target Variable Distribution")
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    target_counts.plot(kind='bar', ax=ax, color='steelblue')
+                    ax.set_xlabel(target)
+                    ax.set_ylabel('Count')
+                    ax.set_title(f'Distribution of {target}')
+                    plt.xticks(rotation=45)
+                    st.pyplot(fig)
+                    plt.close()
+                
+                with col_viz2:
+                    st.markdown("#### Class Balance Analysis")
+                    
+                    # Display class counts
+                    st.write("**Class Counts:**")
+                    for class_label, count in target_counts.items():
+                        percentage = (count / len(df)) * 100
+                        st.write(f"- {class_label}: {count} ({percentage:.2f}%)")
+                    
+                    # Imbalance indicator
+                    st.write(f"\n**Imbalance Ratio:** {imbalance_ratio:.3f}")
+                    
+                    if imbalance_ratio < 0.3:
+                        st.error("⚠️ **Severe Class Imbalance Detected!**")
+                    elif imbalance_ratio < 0.5:
+                        st.warning("⚠️ **Moderate Class Imbalance Detected.**")
+                    else:
+                        st.success("✅ **Classes are relatively balanced.**")
+            
+            # For Regression: Show target distribution
+            else:
+                col_viz1, col_viz2 = st.columns(2)
+                
+                with col_viz1:
+                    st.markdown("#### Target Variable Distribution")
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    ax.hist(df[target].dropna(), bins=30, color='steelblue', edgecolor='black')
+                    ax.set_xlabel(target)
+                    ax.set_ylabel('Frequency')
+                    ax.set_title(f'Distribution of {target}')
+                    st.pyplot(fig)
+                    plt.close()
+                
+                with col_viz2:
+                    st.markdown("#### Target Statistics")
+                    stats = df[target].describe()
+                    st.write(stats)
+            
+            # Feature correlation heatmap
+            if len(features) > 1:
+                st.markdown("#### Feature Correlation Heatmap")
+                numeric_features = df[features].select_dtypes(include=['number']).columns.tolist()
+                
+                if len(numeric_features) > 1:
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    corr_matrix = df[numeric_features].corr()
+                    sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm', ax=ax, center=0)
+                    ax.set_title('Feature Correlation Matrix')
+                    st.pyplot(fig)
+                    plt.close()
+            
             # Train button
             if st.button("🚀 Train Model", type="primary", use_container_width=True):
                 with st.spinner("Training model... Please wait..."):
@@ -163,13 +252,30 @@ if selected_dataset_path is not None:
                         # Step 1: Preprocess data
                         st.info("📊 Step 1/2: Preprocessing data...")
                         preprocessor = DataPreprocessor(selected_dataset_path)
-                        X_train, X_test, y_train, y_test = preprocessor.preprocess(
-                            features=features,
-                            target=target,
-                            scale_method=scale_method,
-                            encode_method=encode_method,
-                            impute_strategy=impute_strategy
-                        )
+                        
+                        # Call preprocess with imbalance handling if enabled
+                        if task_selector == "Classification" and handle_imbalance:
+                            X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
+                                features=features,
+                                target=target,
+                                scale_method=scale_method,
+                                encode_method=encode_method,
+                                impute_strategy=impute_strategy,
+                                handle_imbalance=True,
+                                imbalance_strategy=imbalance_strategy
+                            )
+                            st.session_state.distribution = distribution
+                        else:
+                            X_train, X_test, y_train, y_test,_ = preprocessor.preprocess(
+                                features=features,
+                                target=target,
+                                scale_method=scale_method,
+                                encode_method=encode_method,
+                                impute_strategy=impute_strategy,
+                                handle_imbalance=False,
+                                imbalance_strategy="smote"
+                            )
+                            st.session_state.distribution = None
                         
                         # Step 2: Train model
                         st.info("🤖 Step 2/2: Training model...")
@@ -186,11 +292,7 @@ if selected_dataset_path is not None:
                         st.session_state.model_instance = model
                         st.session_state.task_type = task_selector
                         st.session_state.y_test = y_test
-                        st.session_state.X_test = X_test
-                        
-                        # Store the trained model object for download
-                        # Assuming your Classification/Regression class has a 'model' attribute
-                        # that contains the actual trained sklearn model
+
                         if hasattr(model, 'model'):
                             st.session_state.trained_model = model.model
                         elif hasattr(model, 'best_model'):
@@ -211,11 +313,25 @@ if selected_dataset_path is not None:
             st.markdown("---")
             st.markdown("### 📈 Training Results")
             
+            # Show imbalance handling results if applied
+            if st.session_state.task_type == "Classification" and st.session_state.distribution:
+                st.markdown("#### ⚖️ Class Distribution (After Resampling)")
+                dist = st.session_state.distribution
+                
+                col_d1, col_d2 = st.columns(2)
+                
+                with col_d1:
+                    st.write("**Before Resampling:**")
+                    for class_label, count in dist['train_before'].items():
+                        st.write(f"- Class {class_label}: {count}")
+                
+                with col_d2:
+                    st.write("**After Resampling:**")
+                    for class_label, count in dist['train_after'].items():
+                        st.write(f"- Class {class_label}: {count}")
+            
             results = st.session_state.results
             model = st.session_state.model_instance
-            
-            # Get metrics from results
-            metrics = results.get('metrics', {})
             
             # Display based on task type
             if st.session_state.task_type == "Classification":
@@ -223,8 +339,11 @@ if selected_dataset_path is not None:
                 if selected_model_key == 'best':
                     best_model_key = results['best_model']
                     best_model_name = [name for name, key in dictionary_model.items() if key == best_model_key][0]
+                    metrics = results['metrics']
                     
                     st.info(f"🏆 **Best Model Selected:** {best_model_name}")
+                else:
+                    metrics = results['metrics']
                 
                 # Display metrics in columns
                 col1, col2, col3, col4 = st.columns(4)
@@ -252,14 +371,56 @@ if selected_dataset_path is not None:
                 # Classification Report
                 with st.expander("📋 Detailed Classification Report"):
                     st.text(model.get_classification_report())
+                
+                # Visualization AFTER model training
+                st.markdown("---")
+                st.markdown("### 📊 Model Performance Visualization")
+                
+                col_viz1, col_viz2 = st.columns(2)
+                
+                with col_viz1:
+                    st.markdown("#### Confusion Matrix Heatmap")
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', ax=ax)
+                    ax.set_xlabel('Predicted')
+                    ax.set_ylabel('Actual')
+                    ax.set_title('Confusion Matrix')
+                    st.pyplot(fig)
+                    plt.close()
+                
+                with col_viz2:
+                    st.markdown("#### Prediction Distribution")
+                    y_test = st.session_state.y_test
+                    predictions = metrics['predictions']
+                    
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    x_pos = range(len(Counter(y_test)))
+                    actual_counts = [count for _, count in sorted(Counter(y_test).items())]
+                    pred_counts = [count for _, count in sorted(Counter(predictions).items())]
+                    
+                    width = 0.35
+                    ax.bar([x - width/2 for x in x_pos], actual_counts, width, label='Actual', color='steelblue')
+                    ax.bar([x + width/2 for x in x_pos], pred_counts, width, label='Predicted', color='coral')
+                    
+                    ax.set_xlabel('Classes')
+                    ax.set_ylabel('Count')
+                    ax.set_title('Actual vs Predicted Distribution')
+                    ax.set_xticks(x_pos)
+                    ax.set_xticklabels(sorted(Counter(y_test).keys()))
+                    ax.legend()
+                    st.pyplot(fig)
+                    plt.close()
             
             else:  # Regression
                 # Get best model info
                 if selected_model_key == 'best':
                     best_model_key = results['best_model']
                     best_model_name = [name for name, key in dictionary_model.items() if key == best_model_key][0]
+                    metrics = results['metrics']
                     
                     st.info(f"🏆 **Best Model Selected:** {best_model_name}")
+                else:
+                    metrics = results['metrics']
                 
                 # Display metrics in columns
                 col1, col2, col3, col4 = st.columns(4)
@@ -278,8 +439,41 @@ if selected_dataset_path is not None:
                     st.markdown("#### 📊 Model Comparison")
                     comparison_df = model.get_model_comparison()
                     st.dataframe(comparison_df, use_container_width=True)
+                
+                # Visualization AFTER model training
+                st.markdown("---")
+                st.markdown("### 📊 Model Performance Visualization")
+                
+                y_test = st.session_state.y_test
+                predictions = metrics['predictions']
+                
+                col_viz1, col_viz2 = st.columns(2)
+                
+                with col_viz1:
+                    st.markdown("#### Actual vs Predicted")
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    ax.scatter(y_test, predictions, alpha=0.6, color='steelblue')
+                    ax.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+                    ax.set_xlabel('Actual Values')
+                    ax.set_ylabel('Predicted Values')
+                    ax.set_title('Actual vs Predicted Values')
+                    ax.grid(True, alpha=0.3)
+                    st.pyplot(fig)
+                    plt.close()
+                
+                with col_viz2:
+                    st.markdown("#### Residuals Distribution")
+                    residuals = y_test - predictions
+                    fig, ax = plt.subplots(figsize=(8, 6))
+                    ax.hist(residuals, bins=30, color='coral', edgecolor='black')
+                    ax.set_xlabel('Residuals')
+                    ax.set_ylabel('Frequency')
+                    ax.set_title('Distribution of Residuals')
+                    ax.axvline(x=0, color='red', linestyle='--', linewidth=2)
+                    st.pyplot(fig)
+                    plt.close()
 
-            # Download Model
+                    
             st.markdown('---')
             st.markdown('### 🗃️ Download Trained Model')
             
@@ -298,22 +492,26 @@ if selected_dataset_path is not None:
                 )
             else:
                 st.warning("⚠️ Model not available for download. Please train a model first.")
-            
             # Download predictions
             st.markdown("---")
-            st.markdown("### 💾 Download Predictions")
+            st.markdown("### 💾 Download Results")
             
-            # Use session state variables
-            predictions_df = pd.DataFrame({
-                'Actual': st.session_state.y_test,
-                'Predicted': metrics['predictions']
-            })
+            if task_selector == "Classification":
+                predictions_df = pd.DataFrame({
+                    'Actual': y_test,
+                    'Predicted': metrics['predictions']
+                })
+            else:
+                predictions_df = pd.DataFrame({
+                    'Actual': y_test,
+                    'Predicted': metrics['predictions']
+                })
             
             csv = predictions_df.to_csv(index=False)
             st.download_button(
                 label="📥 Download Predictions as CSV",
                 data=csv,
-                file_name=f"{st.session_state.task_type.lower()}_predictions.csv",
+                file_name=f"{task_selector.lower()}_predictions.csv",
                 mime="text/csv"
             )
             
