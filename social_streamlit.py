@@ -103,7 +103,7 @@ selected_dataset_path = None
 if dataset_option == "Use Preloaded Dataset":
     dataset_choice = st.sidebar.selectbox("Select a Dataset", ["-- Select --", "social.csv"])
     if dataset_choice != "-- Select --":
-        selected_dataset_path = dataset_choice
+        selected_dataset_path = 'datasets/'+dataset_choice
 elif dataset_option == "Upload Your Own":
     uploaded_file = st.sidebar.file_uploader("Upload a CSV file", type="csv")
     if uploaded_file is not None:
