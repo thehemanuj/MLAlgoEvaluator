@@ -18,7 +18,7 @@ class DataPreprocessor:
         
     def preprocess(self, features, target, scale_method='standard', 
                    encode_method='onehot', impute_strategy='mean',
-                   handle_imbalance=None, imbalance_strategy='smote',
+                   handle_imbalance=None, imbalance_strategy=None,
                    sampling_ratio='auto'):
         """
         Preprocess dataset using scikit-learn pipelines with imbalance handling.
@@ -69,23 +69,57 @@ class DataPreprocessor:
         X = df[features]
         y = df[target_col]
         
-        # Check class distribution
-        original_distribution = Counter(y)
-        print(f"Original class distribution: {dict(original_distribution)}")
+        # Handle NaN values in target variable
+        # Remove rows where target is NaN
+        mask = y.notna()
+        X = X[mask]
+        y = y[mask]
         
-        # Auto-detect imbalance if not specified
-        if handle_imbalance is None:
-            handle_imbalance = self._detect_imbalance(y)
-            if handle_imbalance:
-                print("⚠️  Class imbalance detected! Applying resampling strategy.")
+        if len(y) == 0:
+            raise ValueError("Target variable contains only NaN values!")
+        
+        print(f"Removed {(~mask).sum()} rows with NaN in target variable")
+        
+        # Determine if this is classification or regression
+        # Heuristic: fewer than 50 unique values suggests classification
+        is_classification = len(y.unique()) < 50
+        
+        # Initialize distribution variables
+        original_distribution = {}
+        train_distribution_before = {}
+        
+        # Check class distribution (only for classification)
+        if is_classification:
+            original_distribution = Counter(y)
+            print(f"Original class distribution: {dict(original_distribution)}")
+            
+            # Auto-detect imbalance if not specified
+            if handle_imbalance is None:
+                handle_imbalance = self._detect_imbalance(y)
+                if handle_imbalance:
+                    print("⚠️  Class imbalance detected! Applying resampling strategy.")
+        else:
+            # For regression, disable imbalance handling
+            print("Regression task detected - skipping imbalance handling")
+            handle_imbalance = False
+            original_distribution = {"regression": len(y)}
         
         # Split data first (avoid data leakage)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, random_state=39, train_size=0.8, stratify=y
-        )
+        # For regression, don't use stratify
+        if is_classification:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, random_state=39, train_size=0.8, stratify=y
+            )
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, random_state=39, train_size=0.8
+            )
         
-        train_distribution_before = Counter(y_train)
-        print(f"Training set distribution before resampling: {dict(train_distribution_before)}")
+        if is_classification:
+            train_distribution_before = Counter(y_train)
+            print(f"Training set distribution before resampling: {dict(train_distribution_before)}")
+        else:
+            train_distribution_before = {"regression": len(y_train)}
         
         # Identify column types
         numeric_cols = X_train.select_dtypes(include=[np.number]).columns.tolist()
@@ -135,15 +169,21 @@ class DataPreprocessor:
         X_train_processed = self.preprocessor.fit_transform(X_train)
         X_test_processed = self.preprocessor.transform(X_test)
         
-        # Handle class imbalance AFTER preprocessing
-        if handle_imbalance:
+        # Convert to numpy arrays and handle any remaining NaNs
+        X_train_processed = np.nan_to_num(X_train_processed, nan=0.0)
+        X_test_processed = np.nan_to_num(X_test_processed, nan=0.0)
+        
+        # Handle class imbalance AFTER preprocessing (only for classification)
+        if handle_imbalance and is_classification:
             X_train_processed, y_train = self._apply_resampling(
                 X_train_processed, y_train, 
-                strategy=imbalance_strategy,
+                strategy=imbalance_strategy if imbalance_strategy else 'smote',
                 sampling_ratio=sampling_ratio
             )
             train_distribution_after = Counter(y_train)
             print(f"Training set distribution after resampling: {dict(train_distribution_after)}")
+        else:
+            train_distribution_after = train_distribution_before
         
         # Get feature names after transformation
         feature_names = self.get_feature_names()
@@ -153,12 +193,20 @@ class DataPreprocessor:
         X_test_processed = pd.DataFrame(X_test_processed, columns=feature_names, index=X_test.index)
         
         # Prepare class distribution summary
-        class_distribution = {
-            'original': dict(original_distribution),
-            'train_before': dict(train_distribution_before),
-            'train_after': dict(Counter(y_train)) if handle_imbalance else dict(train_distribution_before),
-            'test': dict(Counter(y_test))
-        }
+        if is_classification:
+            class_distribution = {
+                'original': dict(original_distribution),
+                'train_before': dict(train_distribution_before),
+                'train_after': dict(Counter(y_train)) if handle_imbalance else dict(train_distribution_before),
+                'test': dict(Counter(y_test))
+            }
+        else:
+            class_distribution = {
+                'original': dict(original_distribution),
+                'train_before': dict(train_distribution_before),
+                'train_after': dict(train_distribution_before),
+                'test': {"regression": len(y_test)}
+            }
         
         return X_train_processed, X_test_processed, y_train, y_test, class_distribution
     
@@ -268,33 +316,3 @@ class DataPreprocessor:
         feature_names = self.get_feature_names()
         
         return pd.DataFrame(transformed, columns=feature_names, index=new_data.index)
-
-
-# Example usage
-if __name__ == "__main__":
-    # Initialize preprocessor
-    preprocessor = DataPreprocessor('your_dataset.csv')
-    
-    # Define features and target
-    features = ['age', 'income', 'gender', 'city', 'score']
-    target = ['purchased']
-    
-    # Preprocess with imbalance handling
-    X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
-        features=features,
-        target=target,
-        scale_method='standard',
-        encode_method='onehot',
-        impute_strategy='mean',
-        handle_imbalance=True,  # Set to True to handle imbalance, None for auto-detect
-        imbalance_strategy='smote',  # Options: 'smote', 'adasyn', 'random_oversample', etc.
-        sampling_ratio='auto'  # 'auto' or specific ratio like 0.5
-    )
-    
-    print("\n" + "="*60)
-    print("Training set shape:", X_train.shape)
-    print("Test set shape:", X_test.shape)
-    print("\nClass Distribution Summary:")
-    for key, value in distribution.items():
-        print(f"  {key}: {value}")
-    print("="*60)

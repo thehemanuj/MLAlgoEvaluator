@@ -11,7 +11,7 @@ from preprocessing import DataPreprocessor
 from social_classification import Classification
 from social_regression import Regression
 
-st.set_page_config(page_title="ML Model Evaluator", layout="wide",page_icon="🤓")
+st.set_page_config(page_title="ML Model Evaluator", layout="wide", page_icon="🤓")
 st.title("📊 Supervised Machine Learning Evaluator")
 
 # Initialize session state
@@ -101,9 +101,9 @@ dataset_option = st.sidebar.radio("Choose Dataset Source", ["Use Preloaded Datas
 selected_dataset_path = None
 
 if dataset_option == "Use Preloaded Dataset":
-    dataset_choice = st.sidebar.selectbox("Select a Dataset", ["-- Select --", "social.csv","Position_Salaries.csv","50_Startups.csv"])
+    dataset_choice = st.sidebar.selectbox("Select a Dataset", ["-- Select --", "social.csv", "Position_Salaries.csv", "50_Startups.csv"])
     if dataset_choice != "-- Select --":
-        selected_dataset_path = 'datasets/'+dataset_choice
+        selected_dataset_path = 'datasets/' + dataset_choice
 elif dataset_option == "Upload Your Own":
     uploaded_file = st.sidebar.file_uploader("Upload a CSV file", type="csv")
     if uploaded_file is not None:
@@ -253,7 +253,7 @@ if selected_dataset_path is not None:
                         st.info("📊 Step 1/2: Preprocessing data...")
                         preprocessor = DataPreprocessor(selected_dataset_path)
                         
-                        # Call preprocess with imbalance handling if enabled
+                        # Call preprocess - it now handles both classification and regression correctly
                         if task_selector == "Classification" and handle_imbalance:
                             X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
                                 features=features,
@@ -265,15 +265,27 @@ if selected_dataset_path is not None:
                                 imbalance_strategy=imbalance_strategy
                             )
                             st.session_state.distribution = distribution
-                        else:
-                            X_train, X_test, y_train, y_test,_ = preprocessor.preprocess(
+                        elif task_selector == "Classification":
+                            X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
                                 features=features,
                                 target=target,
                                 scale_method=scale_method,
                                 encode_method=encode_method,
                                 impute_strategy=impute_strategy,
                                 handle_imbalance=False,
-                                imbalance_strategy="smote"
+                                imbalance_strategy=None
+                            )
+                            st.session_state.distribution = distribution
+                        else:
+                            # Regression - no imbalance handling
+                            X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
+                                features=features,
+                                target=target,
+                                scale_method=scale_method,
+                                encode_method=encode_method,
+                                impute_strategy=impute_strategy,
+                                handle_imbalance=False,
+                                imbalance_strategy=None
                             )
                             st.session_state.distribution = None
                         
@@ -315,20 +327,25 @@ if selected_dataset_path is not None:
             
             # Show imbalance handling results if applied
             if st.session_state.task_type == "Classification" and st.session_state.distribution:
-                st.markdown("#### ⚖️ Class Distribution (After Resampling)")
                 dist = st.session_state.distribution
                 
-                col_d1, col_d2 = st.columns(2)
-                
-                with col_d1:
-                    st.write("**Before Resampling:**")
-                    for class_label, count in dist['train_before'].items():
-                        st.write(f"- Class {class_label}: {count}")
-                
-                with col_d2:
-                    st.write("**After Resampling:**")
-                    for class_label, count in dist['train_after'].items():
-                        st.write(f"- Class {class_label}: {count}")
+                # Only show distribution if it's a valid classification distribution
+                if 'train_before' in dist and 'train_after' in dist:
+                    # Check if distributions are different (meaning resampling was applied)
+                    if dist['train_before'] != dist['train_after']:
+                        st.markdown("#### ⚖️ Class Distribution (After Resampling)")
+                        
+                        col_d1, col_d2 = st.columns(2)
+                        
+                        with col_d1:
+                            st.write("**Before Resampling:**")
+                            for class_label, count in dist['train_before'].items():
+                                st.write(f"- Class {class_label}: {count}")
+                        
+                        with col_d2:
+                            st.write("**After Resampling:**")
+                            for class_label, count in dist['train_after'].items():
+                                st.write(f"- Class {class_label}: {count}")
             
             results = st.session_state.results
             model = st.session_state.model_instance
@@ -492,6 +509,7 @@ if selected_dataset_path is not None:
                 )
             else:
                 st.warning("⚠️ Model not available for download. Please train a model first.")
+            
             # Download predictions
             st.markdown("---")
             st.markdown("### 💾 Download Results")
