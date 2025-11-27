@@ -128,7 +128,7 @@ if selected_dataset_path is not None:
         df = pd.read_csv(selected_dataset_path)
         
         st.markdown("### 📊 Dataset Preview")
-        st.dataframe(df.head(10), width="stretch")
+        st.dataframe(df.head(10), use_container_width=True)
         
         col_info1, col_info2, col_info3 = st.columns(3)
         with col_info1:
@@ -246,14 +246,14 @@ if selected_dataset_path is not None:
                     plt.close()
             
             # Train button
-            if st.button("🚀 Train Model", type="primary", width="stretch"):
+            if st.button("🚀 Train Model", type="primary", use_container_width=True):
                 with st.spinner("Training model... Please wait..."):
                     try:
                         # Step 1: Preprocess data
                         st.info("📊 Step 1/2: Preprocessing data...")
                         preprocessor = DataPreprocessor(selected_dataset_path)
                         
-                        # Call preprocess - pass task_type from user selection
+                        # Call preprocess - it now handles both classification and regression correctly
                         if task_selector == "Classification" and handle_imbalance:
                             X_train, X_test, y_train, y_test, distribution = preprocessor.preprocess(
                                 features=features,
@@ -262,8 +262,7 @@ if selected_dataset_path is not None:
                                 encode_method=encode_method,
                                 impute_strategy=impute_strategy,
                                 handle_imbalance=True,
-                                imbalance_strategy=imbalance_strategy,
-                                task_type='classification'
+                                imbalance_strategy=imbalance_strategy
                             )
                             st.session_state.distribution = distribution
                         elif task_selector == "Classification":
@@ -274,8 +273,7 @@ if selected_dataset_path is not None:
                                 encode_method=encode_method,
                                 impute_strategy=impute_strategy,
                                 handle_imbalance=False,
-                                imbalance_strategy=None,
-                                task_type='classification'
+                                imbalance_strategy=None
                             )
                             st.session_state.distribution = distribution
                         else:
@@ -287,8 +285,7 @@ if selected_dataset_path is not None:
                                 encode_method=encode_method,
                                 impute_strategy=impute_strategy,
                                 handle_imbalance=False,
-                                imbalance_strategy=None,
-                                task_type='regression'
+                                imbalance_strategy=None
                             )
                             st.session_state.distribution = None
                         
@@ -381,7 +378,7 @@ if selected_dataset_path is not None:
                 if selected_model_key == 'best':
                     st.markdown("#### 📊 Model Comparison")
                     comparison_df = model.get_model_comparison()
-                    st.dataframe(comparison_df, width="stretch")
+                    st.dataframe(comparison_df, use_container_width=True)
                 
                 # Confusion Matrix
                 st.markdown("#### 🎯 Confusion Matrix")
@@ -458,7 +455,7 @@ if selected_dataset_path is not None:
                 if selected_model_key == 'best':
                     st.markdown("#### 📊 Model Comparison")
                     comparison_df = model.get_model_comparison()
-                    st.dataframe(comparison_df, width="stretch")
+                    st.dataframe(comparison_df, use_container_width=True)
                 
                 # Visualization AFTER model training
                 st.markdown("---")
