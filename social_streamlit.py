@@ -101,7 +101,7 @@ dataset_option = st.sidebar.radio("Choose Dataset Source", ["Use Preloaded Datas
 selected_dataset_path = None
 
 if dataset_option == "Use Preloaded Dataset":
-    dataset_choice = st.sidebar.selectbox("Select a Dataset", ["-- Select --", "social.csv", "Position_Salaries.csv", "50_Startups.csv"])
+    dataset_choice = st.sidebar.selectbox("Select a Dataset", ["-- Select --", "social.csv"])
     if dataset_choice != "-- Select --":
         selected_dataset_path = 'datasets/' + dataset_choice
 elif dataset_option == "Upload Your Own":
